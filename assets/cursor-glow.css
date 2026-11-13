@@ -1,0 +1,31 @@
+/* Soft white light that follows the pointer behind the deck (slides 0–2). */
+.ph-cursor-glow {
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: 1;
+  width: 0;
+  height: 0;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 1.1s cubic-bezier(.22, .61, .36, 1);
+  will-change: transform, opacity;
+}
+.ph-cursor-glow.is-visible { opacity: 1; }
+
+.ph-cursor-glow__body {
+  position: absolute;
+  left: 0;
+  top: 0;
+  will-change: transform, opacity;
+}
+
+/* The light is rasterised once in JS with sub-level dithering: CSS gradients this dark band into rings. */
+.ph-cursor-glow canvas {
+  position: absolute;
+  display: block;
+}
+
+@media (hover: none), (pointer: coarse), (max-width: 1180px) {
+  .ph-cursor-glow { display: none; }
+}
