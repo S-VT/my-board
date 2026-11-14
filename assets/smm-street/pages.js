@@ -77,13 +77,45 @@
     );
   }
 
+  function ensureSmmVideoPlaying(v) {
+    if (!v || !isVideosPageVisible() || reduced.matches) return;
+    if (!v.src && v.dataset.src) v.src = v.dataset.src;
+    if (v.preload !== 'auto') v.preload = 'auto';
+    if (v.networkState === HTMLMediaElement.NETWORK_EMPTY) {
+      try { v.load(); } catch (_) {}
+    }
+    clearTimeout(v.__smmPlayTimer);
+    let tries = 0;
+    const attempt = () => {
+      if (!isVideosPageVisible() || reduced.matches) return;
+      if (!v.paused && !v.ended && v.readyState >= 2) return;
+      tries += 1;
+      v.play().catch(() => {
+        if (tries < 14 && isVideosPageVisible()) {
+          v.__smmPlayTimer = setTimeout(attempt, 240);
+        }
+      });
+    };
+    attempt();
+  }
+
   // Keep videos playing smoothly while Content Page 1 is visible or transitioning, and pause when off-page.
   videos.forEach(v => {
     v.loop = true;
+    v.addEventListener('canplay', () => {
+      if (isVideosPageVisible() && v.paused && !reduced.matches) ensureSmmVideoPlaying(v);
+    });
     v.addEventListener('pause', () => {
-      if (isVideosPageVisible() && !reduced.matches && !v.ended) v.play().catch(() => {});
+      if (isVideosPageVisible() && !reduced.matches && !v.ended) ensureSmmVideoPlaying(v);
     });
   });
+
+  setInterval(() => {
+    if (!isVideosPageVisible() || reduced.matches) return;
+    videos.forEach(v => {
+      if (v && v.paused && !v.seeking && v.readyState >= 2) ensureSmmVideoPlaying(v);
+    });
+  }, 500);
 
   frame.querySelectorAll('.smm-sound').forEach((btn, i) => btn.addEventListener('click', () => {
     const v = videos[i];
@@ -1193,8 +1225,15 @@
   }
 
   function syncAutonomous() {
+    const sectionOn = isSectionLive();
     const videosOn = isVideosPageVisible();
     clearTimeout(smmVidTimer);
+    if (sectionOn && !videosOn) {
+      videos.forEach(v => {
+        if (!v.src && v.dataset.src) v.src = v.dataset.src;
+        if (v.preload === 'none') v.preload = 'metadata';
+      });
+    }
     if (videosOn) {
       videos.forEach(v => {
         if (!v.src && v.dataset.src) v.src = v.dataset.src;
@@ -1202,16 +1241,17 @@
         if (current !== 2) v.muted = true;
       });
       if (!reduced.matches) {
-        const startDelay = busy ? 160 : 0;
+        const startDelay = busy ? 140 : 0;
         smmVidTimer = setTimeout(() => {
           if (!isVideosPageVisible()) return;
           const [v0, v1] = videos;
-          if (v0 && v0.paused) v0.play().catch(() => {});
-          if (v1 && v1.paused) requestAnimationFrame(() => { if (isVideosPageVisible() && v1.paused) v1.play().catch(() => {}); });
+          if (v0) ensureSmmVideoPlaying(v0);
+          if (v1) requestAnimationFrame(() => { if (isVideosPageVisible()) ensureSmmVideoPlaying(v1); });
         }, startDelay);
       }
     } else {
       videos.forEach(v => {
+        clearTimeout(v.__smmPlayTimer);
         v.muted = true;
         if (!v.paused) v.pause();
       });

@@ -753,8 +753,8 @@
       vertTitleEn: 'Kremlin (FOV) — 9:16 Vertical',
       descRu: 'Ролик «Кремль (FOV)» с перспективой от первого лица в центре Москвы: кадр открывается с акцента на часах на руке и переходит к виду на Кремль, Красную площадь и Кремлёвскую набережную. Оба экрана (16:9 и 9:16) воспроизводят поток кадр-в-кадр в полной синхронизации.',
       descEn: '“Kremlin (FOV)” first-person video in the center of Moscow: the frame opens on the wristwatch and transitions to the view of the Kremlin, Red Square, and the Kremlin embankment. Both screens (16:9 and 9:16) play the stream frame-by-frame in full sync.',
-      srcVert: './assets/ad3_vert.mp4?v=hq2',
-      srcWide: './assets/ad3_wide.mp4?v=hq2',
+      srcVert: './assets/ad3_vert.mp4?v=hq4',
+      srcWide: './assets/ad3_wide.mp4?v=hq4',
       poster: './assets/poster_ad3.jpg?v=hq2',
       keyStart: 0.0,
       keyEnd: 13.1,
@@ -779,8 +779,8 @@
       vertTitleEn: 'Teaser — 9:16 Vertical',
       descRu: 'Концентрированный проект «Тизер» (13.7 секунд): вырезка из полноценного видеопродакшена, где акцент идёт на графическом импульсе кардиомонитора (ЭКГ) и последующем переходе к пробуждению героя в палате. Видеоряд идёт в кадр-в-кадр синхронизации на экранах 16:9 и 9:16.',
       descEn: 'Concentrated “Teaser” cut (13.7 seconds): an excerpt from full video production focusing on the graphic ECG pulse and the transition to the hero awakening in the ward. Frame-accurate sync across 16:9 and 9:16 screens.',
-      srcVert: './assets/ad2_vert.mp4?v=hq2',
-      srcWide: './assets/ad2_wide.mp4?v=hq2',
+      srcVert: './assets/ad2_vert.mp4?v=hq4',
+      srcWide: './assets/ad2_wide.mp4?v=hq4',
       poster: './assets/poster_1024.jpg?v=hq2',
       keyStart: 0.0,
       keyEnd: 13.5,
@@ -805,8 +805,8 @@
       vertTitleEn: 'Narrative Video — 9:16 Vertical',
       descRu: 'Небольшой отрывок «Сюжетный ролик» с выверенной драматургией: выход из интерьера, работа с мобильным устройством и переход в городскую среду. Экспозиция открывается выходом из домашней среды, переход сделан синхронно и точно.',
       descEn: 'Short “Narrative Video” excerpt with precise dramaturgy: departure from the interior, mobile device interaction, and transition into the urban environment. Exposition opens from the home interior with a synchronous, accurate cut.',
-      srcVert: './assets/ad1_vert.mp4?v=hq2',
-      srcWide: './assets/ad1_wide.mp4?v=hq2',
+      srcVert: './assets/ad1_vert.mp4?v=hq4',
+      srcWide: './assets/ad1_wide.mp4?v=hq4',
       poster: './assets/poster_00_16_compressed_smaller_h264.jpg?v=hq2',
       keyStart: 0.0,
       keyEnd: 8.95,
@@ -864,11 +864,92 @@
     return false;
   }
 
+  function ensureVideoPlaying(vid, shouldPlayFn) {
+    if (!vid || (shouldPlayFn && !shouldPlayFn())) return;
+    vid.muted = true;
+    vid.playsInline = true;
+    if (vid.preload !== 'auto') vid.preload = 'auto';
+    if (
+      vid.networkState === HTMLMediaElement.NETWORK_EMPTY ||
+      (vid.readyState === 0 && vid.networkState === HTMLMediaElement.NETWORK_NO_SOURCE)
+    ) {
+      try { vid.load(); } catch (_) {}
+    }
+
+    clearTimeout(vid.__retryPlayTimer);
+    if (vid.__retryPlayCleanup) {
+      vid.__retryPlayCleanup();
+      vid.__retryPlayCleanup = null;
+    }
+
+    let attempts = 0;
+    const tryStart = () => {
+      if (!vid || (shouldPlayFn && !shouldPlayFn())) {
+        cleanup();
+        return;
+      }
+      vid.muted = true;
+      if (!vid.paused && !vid.ended && vid.readyState >= 2) {
+        cleanup();
+        return;
+      }
+      attempts += 1;
+      const p = vid.play?.();
+      if (p && typeof p.then === 'function') {
+        p.then(() => {
+          if (shouldPlayFn && !shouldPlayFn()) {
+            try { vid.pause(); } catch (_) {}
+            cleanup();
+            return;
+          }
+          if (!vid.paused && vid.readyState >= 2) {
+            cleanup();
+          } else if (attempts < 18) {
+            vid.__retryPlayTimer = setTimeout(tryStart, 240);
+          }
+        }).catch(() => {
+          if (shouldPlayFn && !shouldPlayFn()) {
+            cleanup();
+            return;
+          }
+          if (vid.readyState === 0 && attempts === 3) {
+            try { vid.load(); } catch (_) {}
+          }
+          if (attempts < 18) {
+            vid.__retryPlayTimer = setTimeout(tryStart, 260);
+          }
+        });
+      }
+    };
+
+    const onMediaReady = () => {
+      if (!shouldPlayFn || shouldPlayFn()) tryStart();
+      else cleanup();
+    };
+    const cleanup = () => {
+      clearTimeout(vid.__retryPlayTimer);
+      vid.removeEventListener('loadeddata', onMediaReady);
+      vid.removeEventListener('canplay', onMediaReady);
+      vid.removeEventListener('canplaythrough', onMediaReady);
+      vid.__retryPlayCleanup = null;
+    };
+
+    vid.__retryPlayCleanup = cleanup;
+    vid.addEventListener('loadeddata', onMediaReady);
+    vid.addEventListener('canplay', onMediaReady);
+    vid.addEventListener('canplaythrough', onMediaReady);
+    tryStart();
+  }
+
   function waitVideoCanPlayAt(vid, targetSec, token) {
     return new Promise(resolve => {
       if (!vid) { resolve(); return; }
       vid.muted = true;
       vid.playbackRate = 1.0;
+      if (vid.preload !== 'auto') vid.preload = 'auto';
+      if (vid.networkState === HTMLMediaElement.NETWORK_EMPTY) {
+        try { vid.load(); } catch (_) {}
+      }
 
       const applySeek = () => {
         if (token !== syncSeekToken) { resolve(); return; }
@@ -880,7 +961,7 @@
           return;
         }
         const onReady = () => {
-          if (!vid.seeking && vid.readyState >= 2) {
+          if (!vid.seeking && vid.readyState >= 3) {
             cleanup();
             resolve();
           }
@@ -888,14 +969,23 @@
         const cleanup = () => {
           vid.removeEventListener('seeked', onReady);
           vid.removeEventListener('canplay', onReady);
+          vid.removeEventListener('canplaythrough', onReady);
+          clearTimeout(softTimer);
           clearTimeout(fallbackTimer);
         };
+        const softTimer = setTimeout(() => {
+          if (!vid.seeking && vid.readyState >= 2) {
+            cleanup();
+            resolve();
+          }
+        }, 1200);
         const fallbackTimer = setTimeout(() => {
           cleanup();
           resolve();
-        }, 420);
+        }, 2800);
         vid.addEventListener('seeked', onReady);
         vid.addEventListener('canplay', onReady);
+        vid.addEventListener('canplaythrough', onReady);
       };
 
       if (vid.readyState >= 1 && isTimeSeekable(vid, targetSec)) {
@@ -903,6 +993,7 @@
       } else {
         const onLoaded = () => {
           if (vid.readyState >= 1 && isTimeSeekable(vid, targetSec)) {
+            vid.removeEventListener('loadedmetadata', onLoaded);
             vid.removeEventListener('loadeddata', onLoaded);
             vid.removeEventListener('canplay', onLoaded);
             vid.removeEventListener('progress', onLoaded);
@@ -911,11 +1002,13 @@
           }
         };
         const loadTimeout = setTimeout(() => {
+          vid.removeEventListener('loadedmetadata', onLoaded);
           vid.removeEventListener('loadeddata', onLoaded);
           vid.removeEventListener('canplay', onLoaded);
           vid.removeEventListener('progress', onLoaded);
           applySeek();
-        }, 700);
+        }, 2400);
+        vid.addEventListener('loadedmetadata', onLoaded);
         vid.addEventListener('loadeddata', onLoaded);
         vid.addEventListener('canplay', onLoaded);
         vid.addEventListener('progress', onLoaded);
@@ -923,8 +1016,12 @@
     });
   }
 
+  let dualBufferHold = false;
+  let lastDualLoopMs = 0;
+
   function syncBothVideosTo(timeSec) {
     const token = ++syncSeekToken;
+    dualBufferHold = false;
     const target = Math.max(0, Number(timeSec) || 0);
     if (videoWide) { videoWide.muted = true; videoWide.pause(); }
     if (videoVert) { videoVert.muted = true; videoVert.pause(); }
@@ -933,22 +1030,54 @@
       waitVideoCanPlayAt(videoWide, target, token),
       waitVideoCanPlayAt(videoVert, target, token)
     ]).then(() => {
-      if (token !== syncSeekToken) return;
+      if (token !== syncSeekToken || targetIdx !== 2) return;
       if (videoWide) {
-        videoWide.muted = true;
         videoWide.playbackRate = 1.0;
-        videoWide.play()?.catch?.(() => {});
+        ensureVideoPlaying(videoWide, () => token === syncSeekToken && targetIdx === 2 && !dualBufferHold);
       }
       if (videoVert) {
-        requestAnimationFrame(() => {
-          if (token !== syncSeekToken || targetIdx !== 2) return;
-          videoVert.muted = true;
-          videoVert.playbackRate = 1.0;
-          videoVert.play()?.catch?.(() => {});
-        });
+        videoVert.playbackRate = 1.0;
+        ensureVideoPlaying(videoVert, () => token === syncSeekToken && targetIdx === 2 && !dualBufferHold);
       }
     });
   }
+
+  function engageDualBufferHold() {
+    if (targetIdx !== 2 || dualBufferHold) return;
+    const wideStalled = videoWide && !videoWide.ended && videoWide.readyState < 3;
+    const vertStalled = videoVert && !videoVert.ended && videoVert.readyState < 3;
+    if (!wideStalled && !vertStalled) return;
+    dualBufferHold = true;
+    try { videoWide?.pause(); } catch (_) {}
+    try { videoVert?.pause(); } catch (_) {}
+  }
+
+  function tryReleaseDualBufferHold() {
+    if (!dualBufferHold || targetIdx !== 2) return;
+    if (!videoWide || !videoVert) { dualBufferHold = false; return; }
+    if (videoWide.readyState >= 3 && videoVert.readyState >= 3) {
+      dualBufferHold = false;
+      const refTime = Math.max(videoVert.currentTime || 0, videoWide.currentTime || 0);
+      if (Math.abs((videoWide.currentTime || 0) - refTime) > 0.08 && isTimeSeekable(videoWide, refTime)) {
+        try { videoWide.currentTime = refTime; } catch (_) {}
+      }
+      if (Math.abs((videoVert.currentTime || 0) - refTime) > 0.08 && isTimeSeekable(videoVert, refTime)) {
+        try { videoVert.currentTime = refTime; } catch (_) {}
+      }
+      const snapToken = syncSeekToken;
+      ensureVideoPlaying(videoWide, () => snapToken === syncSeekToken && targetIdx === 2 && !dualBufferHold);
+      ensureVideoPlaying(videoVert, () => snapToken === syncSeekToken && targetIdx === 2 && !dualBufferHold);
+    }
+  }
+
+  [videoWide, videoVert].forEach(v => {
+    if (!v) return;
+    v.addEventListener('waiting', engageDualBufferHold);
+    v.addEventListener('stalled', engageDualBufferHold);
+    v.addEventListener('canplay', tryReleaseDualBufferHold);
+    v.addEventListener('canplaythrough', tryReleaseDualBufferHold);
+    v.addEventListener('progress', tryReleaseDualBufferHold);
+  });
 
   function updateHotspotButtons() {
     const p = AD_PROJECTS[curAdIdx];
@@ -1042,22 +1171,29 @@
     syncBothVideosTo(startSec);
   }
 
-  // Restart both 16:9 and 9:16 streams together at loop end without mid-stream playbackRate changes
-  videoVert?.addEventListener('ended', () => {
+  function restartDualLoop() {
     if (targetIdx !== 2) return;
+    const now = performance.now();
+    if (now - lastDualLoopMs < 280) return;
+    lastDualLoopMs = now;
     const p = AD_PROJECTS[curAdIdx];
     const startSec = highlightMode ? p.keyStart : 0;
-    if (startSec === 0 && videoWide && videoVert && videoWide.readyState >= 2 && videoVert.readyState >= 2) {
+    if (startSec === 0 && videoWide && videoVert && videoWide.readyState >= 3 && videoVert.readyState >= 3) {
+      dualBufferHold = false;
       try { videoWide.currentTime = 0; } catch (_) {}
       try { videoVert.currentTime = 0; } catch (_) {}
       videoWide.playbackRate = 1.0;
       videoVert.playbackRate = 1.0;
-      videoWide.play()?.catch?.(() => {});
-      videoVert.play()?.catch?.(() => {});
+      const snapToken = syncSeekToken;
+      ensureVideoPlaying(videoWide, () => snapToken === syncSeekToken && targetIdx === 2 && !dualBufferHold);
+      ensureVideoPlaying(videoVert, () => snapToken === syncSeekToken && targetIdx === 2 && !dualBufferHold);
     } else {
       syncBothVideosTo(startSec);
     }
-  });
+  }
+
+  videoVert?.addEventListener('ended', restartDualLoop);
+  videoWide?.addEventListener('ended', restartDualLoop);
 
   // Keep 16:9 and 9:16 streams synchronized at locked 1.0x cadence without fighting the hardware video decoder
   let lastSyncCheckMs = 0;
@@ -1067,6 +1203,11 @@
     const now = performance.now();
     if (now - lastSyncCheckMs < 250) return;
     lastSyncCheckMs = now;
+
+    if (dualBufferHold) {
+      tryReleaseDualBufferHold();
+      return;
+    }
 
     const p = AD_PROJECTS[curAdIdx];
     const ct = videoVert.currentTime || videoWide.currentTime || 0;
@@ -1097,21 +1238,31 @@
     if (videoWide.playbackRate !== 1.0) videoWide.playbackRate = 1.0;
     if (videoVert.playbackRate !== 1.0) videoVert.playbackRate = 1.0;
 
-    // Only recover from genuine large drift (> 0.55s) away from loop boundaries and with a 3s cooldown
-    if (!videoWide.seeking && !videoVert.seeking && !videoVert.ended && !videoWide.ended && videoWide.readyState >= 3 && videoVert.readyState >= 3) {
-      const wTime = videoWide.currentTime || 0;
-      const vTime = videoVert.currentTime || 0;
-      const vDur = videoVert.duration || 0;
-      const awayFromLoopEdge = vTime > 0.45 && (!vDur || vTime < vDur - 0.45);
-      const absDiff = Math.abs(vTime - wTime);
-
-      if (awayFromLoopEdge && absDiff > 0.55 && (now - lastHardResyncMs > 3000) && isTimeSeekable(videoWide, vTime)) {
-        lastHardResyncMs = now;
-        try { videoWide.currentTime = vTime; } catch (_) {}
+    if (!videoWide.seeking && !videoVert.seeking && !videoVert.ended && !videoWide.ended) {
+      if ((videoWide.readyState < 2 && !videoVert.paused) || (videoVert.readyState < 2 && !videoWide.paused)) {
+        engageDualBufferHold();
+        return;
       }
 
-      if (!videoVert.paused && videoWide.paused && (!videoWide.duration || vTime < videoWide.duration - 0.15)) {
-        videoWide.play()?.catch?.(() => {});
+      if (videoWide.readyState >= 2 && videoVert.readyState >= 2) {
+        const wTime = videoWide.currentTime || 0;
+        const vTime = videoVert.currentTime || 0;
+        const vDur = videoVert.duration || 0;
+        const awayFromLoopEdge = vTime > 0.35 && (!vDur || vTime < vDur - 0.35);
+        const absDiff = Math.abs(vTime - wTime);
+
+        if (awayFromLoopEdge && absDiff > 0.26 && (now - lastHardResyncMs > 1800) && isTimeSeekable(videoWide, vTime)) {
+          lastHardResyncMs = now;
+          try { videoWide.currentTime = vTime; } catch (_) {}
+        }
+
+        const snapToken = syncSeekToken;
+        if (videoWide.paused && (!videoWide.duration || vTime < videoWide.duration - 0.15)) {
+          ensureVideoPlaying(videoWide, () => snapToken === syncSeekToken && targetIdx === 2 && !dualBufferHold);
+        }
+        if (videoVert.paused && (!vDur || wTime < vDur - 0.15)) {
+          ensureVideoPlaying(videoVert, () => snapToken === syncSeekToken && targetIdx === 2 && !dualBufferHold);
+        }
       }
     }
   }
@@ -2493,9 +2644,54 @@
   const skinCards = $$('[data-skin-seek]');
   let activeCanSkinIdx = 0;
 
+  let canUserPaused = false;
+  let everestAutoReplayTimer = 0;
+  let prodPlayToken = 0;
+
+  function waitMediaPlayable(vid, timeoutMs = 1800) {
+    return new Promise(resolve => {
+      if (!vid) { resolve(); return; }
+      vid.muted = true;
+      if (vid.preload !== 'auto') vid.preload = 'auto';
+      if (vid.networkState === HTMLMediaElement.NETWORK_EMPTY) {
+        try { vid.load(); } catch (_) {}
+      }
+      if (vid.readyState >= 3) { resolve(); return; }
+      const done = () => {
+        if (vid.readyState >= 3) {
+          cleanup();
+          resolve();
+        }
+      };
+      const soft = setTimeout(() => {
+        if (vid.readyState >= 2) {
+          cleanup();
+          resolve();
+        }
+      }, Math.min(900, timeoutMs));
+      const hard = setTimeout(() => {
+        cleanup();
+        resolve();
+      }, timeoutMs);
+      const cleanup = () => {
+        clearTimeout(soft);
+        clearTimeout(hard);
+        vid.removeEventListener('canplay', done);
+        vid.removeEventListener('canplaythrough', done);
+        vid.removeEventListener('loadeddata', done);
+      };
+      vid.addEventListener('canplay', done);
+      vid.addEventListener('canplaythrough', done);
+      vid.addEventListener('loadeddata', done);
+    });
+  }
+
   function pauseAllProductVideos() {
+    clearTimeout(everestAutoReplayTimer);
     [vidCake1, vidCake2, vidCan, vidEv1, vidEv2].forEach(v => {
       if (v) {
+        clearTimeout(v.__retryPlayTimer);
+        if (v.__retryPlayCleanup) v.__retryPlayCleanup();
         v.muted = true;
         try { v.pause(); } catch (_) {}
       }
@@ -2503,9 +2699,11 @@
   }
 
   function startEverestFreezePlayback(forceRewind = false) {
+    clearTimeout(everestAutoReplayTimer);
+    const token = ++prodPlayToken;
     if (monEvClean) monEvClean.classList.remove('is-frozen');
     if (monEvStorm) monEvStorm.classList.remove('is-frozen');
-    [vidEv2, vidEv1].forEach((v, idx) => {
+    [vidEv2, vidEv1].forEach(v => {
       if (!v) return;
       v.preload = 'auto';
       v.muted = true;
@@ -2514,9 +2712,25 @@
       if (forceRewind || wasFrozen || (v.currentTime || 0) > 0.06) {
         try { v.currentTime = 0; } catch (_) {}
       }
-      if (idx === 0) v.play()?.catch?.(() => {});
-      else requestAnimationFrame(() => { if (targetIdx === 10) v.play()?.catch?.(() => {}); });
     });
+    Promise.all([
+      waitMediaPlayable(vidEv2, 1800),
+      waitMediaPlayable(vidEv1, 1800)
+    ]).then(() => {
+      if (token !== prodPlayToken || targetIdx !== 10) return;
+      ensureVideoPlaying(vidEv2, () => token === prodPlayToken && targetIdx === 10 && !vidEv2?.__frozen);
+      ensureVideoPlaying(vidEv1, () => token === prodPlayToken && targetIdx === 10 && !vidEv1?.__frozen);
+    });
+  }
+
+  function scheduleEverestAutoLoopIfBothFrozen() {
+    clearTimeout(everestAutoReplayTimer);
+    if (targetIdx !== 10) return;
+    if (vidEv2?.__frozen && vidEv1?.__frozen) {
+      everestAutoReplayTimer = setTimeout(() => {
+        if (targetIdx === 10) startEverestFreezePlayback(true);
+      }, 2600);
+    }
   }
 
   function bindEverestFreezeOnEnd(videoEl, monitorEl) {
@@ -2529,6 +2743,7 @@
         try { videoEl.currentTime = Math.max(0, videoEl.duration - 0.04); } catch (_) {}
       }
       if (monitorEl) monitorEl.classList.add('is-frozen');
+      scheduleEverestAutoLoopIfBothFrozen();
     };
 
     videoEl.addEventListener('timeupdate', () => {
@@ -2554,54 +2769,95 @@
   function syncProductPageVideos(slideIdx) {
     clearTimeout(prodVideoTimer);
     clearTimeout(prodWarmTimer);
+    const token = ++prodPlayToken;
     pauseAllProductVideos();
     if (slideIdx !== 10 && slideIdx !== 11 && slideIdx !== 12) return;
 
+    if (slideIdx === 12) canUserPaused = false;
+
     const targetVids = slideIdx === 10 ? [vidEv2, vidEv1] : slideIdx === 11 ? [vidCake1, vidCake2] : [vidCan];
     targetVids.forEach(v => {
-      if (v && v.preload !== 'auto') v.preload = 'auto';
+      if (!v) return;
+      if (v.preload !== 'auto') v.preload = 'auto';
+      if (v.networkState === HTMLMediaElement.NETWORK_EMPTY) {
+        try { v.load(); } catch (_) {}
+      }
     });
 
-    // Defer video decoder start by 180ms so the slide transition begins cleanly at full frame rate
     prodVideoTimer = setTimeout(() => {
-      if (targetIdx !== slideIdx) return;
+      if (targetIdx !== slideIdx || token !== prodPlayToken) return;
       if (slideIdx === 10) {
-        startEverestFreezePlayback(false);
+        startEverestFreezePlayback(true);
       } else if (slideIdx === 11) {
-        [vidCake1, vidCake2].forEach((v, idx) => {
+        [vidCake1, vidCake2].forEach(v => {
           if (!v) return;
           v.muted = true;
           if ((v.currentTime || 0) > 0.06) {
             try { v.currentTime = 0; } catch (_) {}
           }
-          if (idx === 0) v.play()?.catch?.(() => {});
-          else requestAnimationFrame(() => { if (targetIdx === 11) v.play()?.catch?.(() => {}); });
+        });
+        Promise.all([
+          waitMediaPlayable(vidCake1, 1800),
+          waitMediaPlayable(vidCake2, 1800)
+        ]).then(() => {
+          if (targetIdx !== 11 || token !== prodPlayToken) return;
+          ensureVideoPlaying(vidCake1, () => token === prodPlayToken && targetIdx === 11);
+          ensureVideoPlaying(vidCake2, () => token === prodPlayToken && targetIdx === 11);
         });
       } else if (slideIdx === 12) {
         if (vidCan) {
           vidCan.muted = true;
-          vidCan.play()?.catch?.(() => {});
+          waitMediaPlayable(vidCan, 1400).then(() => {
+            if (targetIdx !== 12 || token !== prodPlayToken || canUserPaused) return;
+            ensureVideoPlaying(vidCan, () => token === prodPlayToken && targetIdx === 12 && !canUserPaused);
+          });
         }
       }
-    }, 180);
+    }, 120);
 
-    // Pre-warm sibling product clips after transition settles so page switches play without buffer stalls
+    // Politely warm only the next product slide after the active slide is comfortably buffered
     prodWarmTimer = setTimeout(() => {
-      if (targetIdx < 10 || targetIdx > 12) return;
-      [vidEv2, vidEv1, vidCake1, vidCake2, vidCan].forEach(v => {
+      if (targetIdx !== slideIdx) return;
+      const activeBuffered = targetVids.every(v => !v || v.readyState >= 3);
+      if (!activeBuffered) return;
+      const nextVids = slideIdx === 10 ? [vidCake1, vidCake2] : slideIdx === 11 ? [vidCan] : [];
+      nextVids.forEach(v => {
         if (v && v.preload !== 'auto') v.preload = 'auto';
       });
-    }, 1200);
+    }, 2400);
   }
+
+  // Health watchdog for Products videos so mid-stream stalls or rejected play() calls recover automatically
+  setInterval(() => {
+    if (document.hidden) return;
+    if (targetIdx === 10) {
+      [vidEv2, vidEv1].forEach(v => {
+        if (v && !v.__frozen && v.paused && !v.seeking && v.readyState >= 2) {
+          ensureVideoPlaying(v, () => targetIdx === 10 && !v.__frozen);
+        }
+      });
+    } else if (targetIdx === 11) {
+      [vidCake1, vidCake2].forEach(v => {
+        if (v && v.paused && !v.seeking && v.readyState >= 2) {
+          ensureVideoPlaying(v, () => targetIdx === 11);
+        }
+      });
+    } else if (targetIdx === 12 && !canUserPaused) {
+      if (vidCan && vidCan.paused && !vidCan.seeking && vidCan.readyState >= 2) {
+        ensureVideoPlaying(vidCan, () => targetIdx === 12 && !canUserPaused);
+      }
+    }
+  }, 450);
 
   // Clicking either Cake video monitor on Page 2 resyncs & replays both Cake videos from 0.0s
   [vidCake1, vidCake2].forEach(v => {
     v?.parentElement?.addEventListener('click', () => {
+      const token = ++prodPlayToken;
       [vidCake1, vidCake2].forEach(cv => {
         if (!cv) return;
         cv.muted = true;
         try { cv.currentTime = 0; } catch (_) {}
-        cv.play()?.catch?.(() => {});
+        ensureVideoPlaying(cv, () => token === prodPlayToken && targetIdx === 11);
       });
     });
   });
@@ -2622,7 +2878,10 @@
       const sec = parseFloat(card.dataset.skinSeek || '0');
       const sIdx = parseInt(card.dataset.skinIdx || '0', 10);
       activeCanSkinIdx = clamp(sIdx, 0, 3);
+      canUserPaused = true;
       if (vidCan) {
+        clearTimeout(vidCan.__retryPlayTimer);
+        if (vidCan.__retryPlayCleanup) vidCan.__retryPlayCleanup();
         vidCan.muted = true;
         vidCan.pause();
         try { vidCan.currentTime = sec; } catch (_) {}
@@ -2636,8 +2895,13 @@
     if (!vidCan) return;
     vidCan.muted = true;
     if (vidCan.paused) {
-      vidCan.play()?.catch?.(() => {});
+      canUserPaused = false;
+      const token = ++prodPlayToken;
+      ensureVideoPlaying(vidCan, () => token === prodPlayToken && targetIdx === 12 && !canUserPaused);
     } else {
+      canUserPaused = true;
+      clearTimeout(vidCan.__retryPlayTimer);
+      if (vidCan.__retryPlayCleanup) vidCan.__retryPlayCleanup();
       vidCan.pause();
     }
   });
@@ -2982,7 +3246,7 @@
   }
 
   /* ---------------- 5. PROFILE & CONTACTS CONFIGURATION ---------------- */
-  const PROFILE_KEY = 'personal-dossier-profile-v2';
+  const PROFILE_KEY = 'personal-dossier-profile-v3';
   const profileModal = $('#profile-modal');
   const profileForm = $('#profile-form');
 
@@ -3013,14 +3277,6 @@
         if ($('#contact-hh-link')) $('#contact-hh-link').href = d.hh;
         if ($('#inp-hh')) $('#inp-hh').value = d.hh;
       }
-      if (d.email) {
-        if ($('#contact-email-text')) $('#contact-email-text').textContent = d.email;
-        if ($('#inp-email')) $('#inp-email').value = d.email;
-      }
-      if (d.phone) {
-        if ($('#contact-phone-text')) $('#contact-phone-text').textContent = d.phone;
-        if ($('#inp-phone')) $('#inp-phone').value = d.phone;
-      }
     } catch (_) {}
   }
 
@@ -3050,33 +3306,12 @@
     const d = {
       name: $('#inp-name')?.value?.trim() || 'ПЕРСОНАЛЬНЫЙ ПРОФИЛЬ // ДОСЬЕ СПЕЦИАЛИСТА',
       brand: $('#inp-brand')?.value?.trim() || 'МОЁ ДОСЬЕ',
-      tg: $('#inp-tg')?.value?.trim() || '@specialist_contact',
-      hh: $('#inp-hh')?.value?.trim() || 'https://hh.ru/',
-      email: $('#inp-email')?.value?.trim() || 'dossier@specialist.ru',
-      phone: $('#inp-phone')?.value?.trim() || '+7 (999) 000-00-00'
+      tg: $('#inp-tg')?.value?.trim() || '@S_VTT',
+      hh: $('#inp-hh')?.value?.trim() || 'https://hh.ru/resume/50a76b11ff114d26830039ed1f396877726a67'
     };
     try { localStorage.setItem(PROFILE_KEY, JSON.stringify(d)); } catch (_) {}
     loadProfileData();
     closeModal();
-  });
-
-  function copyContactCredentials() {
-    const email = $('#contact-email-text')?.textContent || '';
-    const phone = $('#contact-phone-text')?.textContent || '';
-    navigator.clipboard?.writeText(`${email} | ${phone}`).catch(() => {});
-    const lbl = $('#copy-status-label');
-    if (lbl) {
-      const prev = lbl.textContent;
-      lbl.textContent = curLang === 'ru' ? 'РЕКВИЗИТЫ СКОПИРОВАНЫ [OK]' : 'CREDENTIALS COPIED [OK]';
-      setTimeout(() => { lbl.textContent = prev; }, 2000);
-    }
-  }
-  $('#copy-email-card')?.addEventListener('click', copyContactCredentials);
-  $('#copy-email-card')?.addEventListener('keydown', e => {
-    if (e.key === 'Enter' || e.key === ' ') {
-      e.preventDefault();
-      copyContactCredentials();
-    }
   });
 
   const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -4346,7 +4581,6 @@
   function activateInitialSlideHooks(idx) {
     if (idx === 2) {
       videoSlideEnteredOnce = true;
-      loadAdProject(curAdIdx, false);
       runMonitorToPhoneDeployment();
     } else if (idx === 5) {
       techAndAi3dEngine.resize();
@@ -4371,6 +4605,41 @@
     }
   }
 
+  // Polite sequential background pre-warmer so Video Projects and Products start in 0ms without competing with initial load
+  function startSequentialVideoPrewarm() {
+    const queue = [videoWide, videoVert, vidEv2, vidEv1, vidCake1, vidCake2, vidCan].filter(Boolean);
+    let qIdx = 0;
+    const step = () => {
+      if (qIdx >= queue.length) return;
+      const activeSlideNeedsNet =
+        (targetIdx === 2 && ((videoWide && videoWide.readyState < 3) || (videoVert && videoVert.readyState < 3))) ||
+        (targetIdx === 10 && ((vidEv2 && vidEv2.readyState < 3) || (vidEv1 && vidEv1.readyState < 3))) ||
+        (targetIdx === 11 && ((vidCake1 && vidCake1.readyState < 3) || (vidCake2 && vidCake2.readyState < 3))) ||
+        (targetIdx === 12 && vidCan && vidCan.readyState < 3);
+      if (activeSlideNeedsNet) {
+        setTimeout(step, 1400);
+        return;
+      }
+      const v = queue[qIdx++];
+      if (!v || v.readyState >= 4) {
+        setTimeout(step, 120);
+        return;
+      }
+      if (v.preload !== 'auto') v.preload = 'auto';
+      if (v.networkState === HTMLMediaElement.NETWORK_EMPTY) {
+        try { v.load(); } catch (_) {}
+      }
+      const next = () => {
+        v.removeEventListener('canplaythrough', next);
+        clearTimeout(t);
+        setTimeout(step, 350);
+      };
+      const t = setTimeout(next, 2200);
+      v.addEventListener('canplaythrough', next);
+    };
+    setTimeout(step, 1100);
+  }
+
   /* Initialize */
   loadProfileData();
   applyCategoryFilter('all', false);
@@ -4381,8 +4650,10 @@
     fromIdx = initialHashIdx;
     pos = initialHashIdx;
   }
-  loadAdProject(0, false);
+  updateVideoCopy();
   applyLang(readLang());
+  if (document.readyState === 'complete') startSequentialVideoPrewarm();
+  else addEventListener('load', startSequentialVideoPrewarm, { once: true });
   renderDeck(0.016);
   updateHUD();
   if (targetIdx > 0) {

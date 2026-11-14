@@ -2257,12 +2257,12 @@ body.is-snapping .ph-snap-flash {
 
 .ph-contact-cards {
   display: grid;
-  gap: 10px;
+  gap: 14px;
 }
 .ph-contact-card {
   display: grid;
-  gap: 5px;
-  padding: 16px 18px;
+  gap: 6px;
+  padding: 20px 22px;
   background: rgba(11, 11, 11, 0.92);
   border: 1px solid var(--line-2);
   cursor: pointer;
